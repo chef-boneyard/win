@@ -2,6 +2,7 @@ require 'rubygems'
 require 'iconv'
 require 'win/library'
 require 'win/error'
+require 'win/memory'
 require 'win/security/security_descriptor'
 
 module Win
@@ -200,19 +201,44 @@ module Win
       end
     end
 
-    # DWORD WINAPI GetNamedSecurityInfo(
-    #  __in       LPTSTR pObjectName,
-    #  __in       SE_OBJECT_TYPE ObjectType,
-    #  __in       SECURITY_INFORMATION SecurityInfo,
-    #  __out_opt  PSID *ppsidOwner,
-    #  __out_opt  PSID *ppsidGroup,
-    #  __out_opt  PACL *ppDacl,
-    #  __out_opt  PACL *ppSacl,
-    #  __out_opt  PSECURITY_DESCRIPTOR *ppSecurityDescriptor
-    # );
     #
-    # http://msdn.microsoft.com/en-us/library/windows/desktop/aa446645(v=vs.85).aspx
-    # TODO support Unicode
+    # Windows functions
+    #
+
+    function :FreeSid, [ :pointer ], :pointer, :dll => "advapi32"
+    def self.free_sid(sid)
+      sid = sid.pointer if sid.respond_to?(:pointer)
+      unless FreeSid(sid).null?
+        Win::Error.raise_last_error
+      end
+    end
+
+    function :GetAce, [ :pointer, :DWORD, :pointer ], :BOOL, :dll => "advapi32"
+    def self.get_ace(acl, index)
+      acl = acl.pointer if acl.respond_to?(:pointer)
+      ace = FFI::Buffer.new :pointer
+      unless GetAce(acl, index, ace)
+        Win::Error.raise_last_error
+      end
+      ACE.new(ace.read_pointer)
+    end
+
+    function :GetNamedSecurityInfo,  [ :LPTSTR, :SE_OBJECT_TYPE, :DWORD, :pointer, :pointer, :pointer, :pointer, :pointer ], :DWORD, :dll => "advapi32"
+    def self.get_named_security_info(path, type = :SE_FILE_OBJECT, info = OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION, &block)
+      security_descriptor = FFI::MemoryPointer.new :pointer
+      hr = GetNamedSecurityInfo(path, type, info, nil, nil, nil, nil, security_descriptor)
+      if hr != Win::Error::S_OK
+        Win::Error.raise_error(hr)
+      end
+
+      result = SecurityDescriptor.new(security_descriptor.read_pointer)
+      if block != nil
+        yield result
+        Win::Memory.local_free(result.pointer)
+      else
+        result
+      end
+    end
 
     function :GetSecurityDescriptorControl, [ :pointer, :PWORD, :LPDWORD], :BOOL, :dll => "advapi32"
     def self.get_security_descriptor_control(security_descriptor)
@@ -223,28 +249,6 @@ module Win
         Win::Error.raise_last_error
       end
       [ result.read_ushort, version.read_uint32 ]
-    end
-
-    function :GetSecurityDescriptorOwner, [ :pointer, :pointer, :LPBOOL], :BOOL, :dll => "advapi32"
-    def self.get_security_descriptor_owner(security_descriptor)
-      security_descriptor = security_descriptor.pointer if security_descriptor.respond_to?(:pointer)
-      result = FFI::Buffer.new :pointer
-      defaulted = FFI::Buffer.new :long
-      unless GetSecurityDescriptorOwner(security_descriptor, result, defaulted)
-        Win::Error.raise_last_error
-      end
-      [ SID.new(result.read_pointer), defaulted.read_char != 0 ]
-    end
-
-    function :GetSecurityDescriptorGroup, [ :pointer, :pointer, :LPBOOL], :BOOL, :dll => "advapi32"
-    def self.get_security_descriptor_group(security_descriptor)
-      security_descriptor = security_descriptor.pointer if security_descriptor.respond_to?(:pointer)
-      result = FFI::Buffer.new :pointer
-      defaulted = FFI::Buffer.new :long
-      unless GetSecurityDescriptorGroup(security_descriptor, result, defaulted)
-        Win::Error.raise_last_error
-      end
-      [ SID.new(result.read_pointer), defaulted.read_char != 0 ]
     end
 
     function :GetSecurityDescriptorDacl, [ :pointer, :LPBOOL, :pointer, :LPBOOL ], :BOOL, :dll => "advapi32"
@@ -259,6 +263,44 @@ module Win
       [ present.read_char != 0, ACL.new(acl.read_pointer), defaulted.read_char != 0 ]
     end
 
+    function :GetSecurityDescriptorGroup, [ :pointer, :pointer, :LPBOOL], :BOOL, :dll => "advapi32"
+    def self.get_security_descriptor_group(security_descriptor, &block)
+      security_descriptor = security_descriptor.pointer if security_descriptor.respond_to?(:pointer)
+      result = FFI::Buffer.new :pointer
+      defaulted = FFI::Buffer.new :long
+      unless GetSecurityDescriptorGroup(security_descriptor, result, defaulted)
+        Win::Error.raise_last_error
+      end
+
+      sid = SID.new(result.read_pointer)
+      defaulted = defaulted.read_char != 0
+      if block != nil
+        yield sid, defaulted
+        free_sid(sid)
+      else
+        [ sid, defaulted ]
+      end
+    end
+
+    function :GetSecurityDescriptorOwner, [ :pointer, :pointer, :LPBOOL], :BOOL, :dll => "advapi32"
+    def self.get_security_descriptor_owner(security_descriptor, &block)
+      security_descriptor = security_descriptor.pointer if security_descriptor.respond_to?(:pointer)
+      result = FFI::Buffer.new :pointer
+      defaulted = FFI::Buffer.new :long
+      unless GetSecurityDescriptorOwner(security_descriptor, result, defaulted)
+        Win::Error.raise_last_error
+      end
+
+      sid = SID.new(result.read_pointer)
+      defaulted = defaulted.read_char != 0
+      if block != nil
+        yield sid, defaulted
+        free_sid(sid)
+      else
+        [ sid, defaulted ]
+      end
+    end
+
     function :GetSecurityDescriptorSacl, [ :pointer, :LPBOOL, :pointer, :LPBOOL ], :BOOL, :dll => "advapi32"
     def self.get_security_descriptor_sacl(security_descriptor)
       security_descriptor = security_descriptor.pointer if security_descriptor.respond_to?(:pointer)
@@ -271,25 +313,7 @@ module Win
       [ present.read_char != 0, ACL.new(acl.read_pointer), defaulted.read_char != 0 ]
     end
 
-    function :GetAce, [ :pointer, :DWORD, :pointer ], :BOOL, :dll => "advapi32"
-    def self.get_ace(acl, index)
-      acl = acl.pointer if acl.respond_to?(:pointer)
-      ace = FFI::Buffer.new :pointer
-      unless GetAce(acl, index, ace)
-        Win::Error.raise_last_error
-      end
-      ACE.new(ace.read_pointer)
-    end
-
-    function :GetNamedSecurityInfo,  [ :LPTSTR, :SE_OBJECT_TYPE, :DWORD, :pointer, :pointer, :pointer, :pointer, :pointer ], :DWORD, :dll => "advapi32"
-    def self.get_named_security_info(path, type = :SE_FILE_OBJECT, info = OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION)
-      security_descriptor = FFI::MemoryPointer.new :pointer
-      hr = GetNamedSecurityInfo(path, type, info, nil, nil, nil, nil, security_descriptor)
-      if hr != Win::Error::S_OK
-        Win::Error.raise_error(hr)
-      end
-      SecurityDescriptor.new(security_descriptor.read_pointer)
-    end
+    function :InitializeAcl, [ :pointer, :DWORD, :DWORD ], :BOOL, :dll => "advapi32"
 
     function :LookupAccountSid, [ :LPCTSTR, :pointer, :LPTSTR, :LPDWORD, :LPTSTR, :LPDWORD, :pointer ], :BOOL, :dll => "advapi32"
     def self.lookup_account_sid(sid, system_name = nil)
