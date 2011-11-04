@@ -13,16 +13,16 @@ module Win
 
       attr_reader :struct
 
+      def pointer
+        struct.pointer
+      end
+
       def length
         struct[:AceCount]
       end
 
       def [](index)
-        ace = FFI::Buffer.new :pointer
-        unless Win::Security.GetAce(struct.pointer, index, ace)
-          Win::Security.raise_last_error
-        end
-        Win::Security::ACE.new(ace.read_pointer)
+        Win::Security::get_ace(pointer, index)
       end
 
       def each
