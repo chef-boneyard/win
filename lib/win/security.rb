@@ -2,12 +2,11 @@ require 'rubygems'
 require 'iconv'
 require 'win/library'
 require 'win/error'
+require 'win/security/security_descriptor'
 
 module Win
   module Security
     extend Win::Library
-
-    include Win::Error
 
     # SE_OBJECT_TYPE Enumeration
     SE_OBJECT_TYPE = enum :SE_OBJECT_TYPE, [
@@ -229,170 +228,10 @@ module Win
     def self.get_named_security_info(path, type = :SE_FILE_OBJECT, info = OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION)
       security_descriptor = FFI::MemoryPointer.new :pointer
       hr = GetNamedSecurityInfo(path, type, info, nil, nil, nil, nil, security_descriptor)
-      if hr != S_OK
-        raise_error(hr)
+      if hr != Win::Error::S_OK
+        Win::Error.raise_error(hr)
       end
       SecurityDescriptor.new(security_descriptor.read_pointer)
-    end
-
-    class SID
-      def initialize(pointer)
-        # TODO I think we're leaking this
-        @pointer = pointer
-      end
-
-      attr_reader :pointer
-
-      def account
-        # Figure out how big the buffer needs to be
-        name_size = FFI::Buffer.new(:long).write_long(0)
-        referenced_domain_name_size = FFI::Buffer.new(:long).write_long(0)
-        if Win::Security.LookupAccountSid(nil, pointer, nil, name_size, nil, referenced_domain_name_size, nil)
-          raise "Expected error from LookupAccountSid!"
-        elsif Win::Error.GetLastError() != Win::Error::ERROR_INSUFFICIENT_BUFFER
-          raise "Expected ERROR_INSUFFICIENT_BUFFER from LookupAccountSid!"
-        end
-
-        name = FFI::MemoryPointer.new :char, name_size.read_long
-        referenced_domain_name = FFI::MemoryPointer.new :char, referenced_domain_name_size.read_long
-        use = FFI::Buffer.new(:long).write_long(0)
-        unless Win::Security.LookupAccountSid(nil, pointer, name, name_size, referenced_domain_name, referenced_domain_name_size, use)
-          Win::Security::raise_last_error
-        end
-
-        [ referenced_domain_name.read_string, name.read_string, use.read_long ]
-      end
-
-      def account_name
-        domain, name, use = account
-        domain ? "#{domain}\\#{name}" : name
-      end
-    end
-
-    class SecurityDescriptor
-      def initialize(pointer)
-        # TODO I think we're leaking this
-        @pointer = pointer
-      end
-
-      attr_reader :pointer
-
-      def owner
-        result = FFI::Buffer.new :pointer
-        owner_defaulted = FFI::Buffer.new :long
-        unless Win::Security.GetSecurityDescriptorOwner(pointer, result, owner_defaulted)
-          Win::Security.raise_last_error
-        end
-        SID.new(result.read_pointer)
-      end
-
-      def group
-        result = FFI::Buffer.new :pointer
-        group_defaulted = FFI::MemoryPointer.new :long
-        unless Win::Security.GetSecurityDescriptorGroup(pointer, result, group_defaulted)
-          Win::Security.raise_last_error
-        end
-        SID.new(result.read_pointer)
-      end
-
-      def control
-        result = FFI::Buffer.new :ushort
-        version = FFI::Buffer.new :uint32
-        # TODO we're getting an error from this, but we're also getting reasonable values.  Investigate and restore error handling.
-        Win::Security.GetSecurityDescriptorControl(pointer, result, version)
-        result.read_ushort
-      end
-
-      def dacl
-        raise "DACL not present" if (control & SE_DACL_PRESENT) == 0
-        present = FFI::Buffer.new :bool
-        defaulted = FFI::Buffer.new :bool
-        acl = FFI::Buffer.new :pointer
-        unless Win::Security.GetSecurityDescriptorDacl(pointer, present, acl, defaulted)
-          Win::Security.raise_last_error
-        end
-        ACL.new(acl.read_pointer)
-      end
-
-      def sacl
-        raise "SACL not present" if (control & SE_SACL_PRESENT) == 0
-        present = FFI::Buffer.new :bool
-        defaulted = FFI::Buffer.new :bool
-        acl = FFI::Buffer.new :pointer
-        unless Win::Security.GetSecurityDescriptorSacl(pointer, present, acl, defaulted)
-          Win::Security.raise_last_error
-        end
-        ACL.new(acl.read_pointer)
-      end
-    end
-
-    class ACL
-      include Enumerable
-
-      def initialize(pointer)
-        @struct = Win::Security::ACLStruct.new pointer
-      end
-
-      attr_reader :struct
-
-      def length
-        struct[:AceCount]
-      end
-
-      def [](index)
-        ace = FFI::Buffer.new :pointer
-        unless Win::Security.GetAce(struct.pointer, index, ace)
-          Win::Security.raise_last_error
-        end
-        Win::Security::ACE.new(ace.read_pointer)
-      end
-
-      def each
-        0.upto(length-1) { |i| yield self[i] }
-      end
-    end
-
-    class ACE
-      def initialize(pointer)
-        if Win::Security::ACE_WITH_MASK_AND_SID.supports?(pointer.read_uchar)
-          @struct = Win::Security::ACE_WITH_MASK_AND_SID.new pointer
-        else
-          # TODO Support ALL the things
-          @struct = Win::Security::ACE_HEADER.new pointer
-        end
-      end
-
-      attr_reader :struct
-
-      def pointer
-        struct.pointer
-      end
-
-      def type
-        struct[:AceType]
-      end
-
-      def flags
-        struct[:AceFlags]
-      end
-
-      def mask
-        struct[:Mask]
-      end
-
-      def sid
-        # The SID runs off the end of the structure, starting at :SidStart.
-        # Use pointer arithmetic to get a pointer to that location.
-        SID.new(struct.pointer + struct.offset_of(:SidStart))
-      end
-
-      def inherited?
-        (struct[:AceFlags] & INHERITED_ACE) != 0
-      end
-
-      def explicit?
-        ! inherited?
-      end
     end
   end
 end
