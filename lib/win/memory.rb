@@ -29,8 +29,11 @@ module Win
       end
       # If a block is passed, handle freeing the memory at the end
       if block != nil
-        yield result
-        local_free(result)
+        begin
+          yield result
+        ensure
+          local_free(result)
+        end
       else
         result
       end
@@ -78,5 +81,16 @@ module Win
       end
       result
     end
+
+    # memory allocators
+    function :malloc, [:size_t], :pointer, :dll => FFI::Library::LIBC
+    function :calloc, [:size_t], :pointer, :dll => FFI::Library::LIBC
+    try_function :valloc, [:size_t], :pointer, :dll => FFI::Library::LIBC
+    function :realloc, [:pointer, :size_t], :pointer, :dll => FFI::Library::LIBC
+    function :free, [:pointer], :void, :dll => FFI::Library::LIBC
+    
+    # memory movers
+    function :memcpy, [:pointer, :pointer, :size_t], :pointer, :dll => FFI::Library::LIBC
+    try_function :bcopy, [:pointer, :pointer, :size_t], :void, :dll => FFI::Library::LIBC
   end
 end
