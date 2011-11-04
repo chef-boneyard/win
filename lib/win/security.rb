@@ -161,6 +161,18 @@ module Win
                                  FILE_EXECUTE             |
                                  SYNCHRONIZE
 
+    # ACL revisions
+    ACL_REVISION     = 2
+    ACL_REVISION_DS  = 4
+    ACL_REVISION1   = 1
+    ACL_REVISION2   = 2
+    ACL_REVISION3   = 3
+    ACL_REVISION4   = 4
+    MIN_ACL_REVISION = ACL_REVISION2
+    MAX_ACL_REVISION = ACL_REVISION4
+
+    MAXDWORD = 0xffffffff
+
     # SECURITY_DESCRIPTOR is an opaque structure whose contents can vary.  Pass the
     # pointer around and free it with LocalFree.
     # http://msdn.microsoft.com/en-us/library/windows/desktop/aa379561(v=vs.85).aspx
@@ -193,10 +205,10 @@ module Win
       # The AceTypes this structure supports
       def self.supports?(ace_type)
         [
-            Win::Security::ACCESS_ALLOWED_ACE_TYPE,
-            Win::Security::ACCESS_DENIED_ACE_TYPE,
-            Win::Security::SYSTEM_AUDIT_ACE_TYPE,
-            Win::Security::SYSTEM_ALARM_ACE_TYPE
+          Win::Security::ACCESS_ALLOWED_ACE_TYPE,
+          Win::Security::ACCESS_DENIED_ACE_TYPE,
+          Win::Security::SYSTEM_AUDIT_ACE_TYPE,
+          Win::Security::SYSTEM_ALARM_ACE_TYPE
         ].include?(ace_type)
       end
     end
@@ -204,6 +216,60 @@ module Win
     #
     # Windows functions
     #
+
+    function :AddAce, [ :pointer, :DWORD, :DWORD, :LPVOID, :DWORD ], :BOOL, :dll => "advapi32"
+    def self.add_ace(acl, ace, insert_position = MAXDWORD, revision = ACL_REVISION)
+      acl = acl.pointer if acl.respond_to?(:pointer)
+      ace = ace.pointer if ace.respond_to?(:pointer)
+      ace_size = ACE_HEADER.new(ace)[:AceSize]
+      unless AddAce(acl, revision, insert_position, ace, ace_size)
+        Win::Error.raise_last_error
+      end
+    end
+
+    function :AddAccessAllowedAce, [ :pointer, :DWORD, :DWORD, :pointer ], :BOOL, :dll => "advapi32"
+    def self.add_access_allowed_ace(acl, sid, access_mask, revision = ACL_REVISION)
+      acl = acl.pointer if acl.respond_to?(:pointer)
+      sid = sid.pointer if sid.respond_to?(:pointer)
+      unless AddAccessAllowedAce(acl, revision, access_mask, sid)
+        Win::Error.raise_last_error
+      end
+    end
+
+    function :AddAccessAllowedAceEx, [ :pointer, :DWORD, :DWORD, :DWORD, :pointer ], :BOOL, :dll => "advapi32"
+    def self.add_access_allowed_ace_ex(acl, sid, access_mask, flags = 0, revision = ACL_REVISION)
+      acl = acl.pointer if acl.respond_to?(:pointer)
+      sid = sid.pointer if sid.respond_to?(:pointer)
+      unless AddAccessAllowedAceEx(acl, revision, flags, access_mask, sid)
+        Win::Error.raise_last_error
+      end
+    end
+
+    function :AddAccessDeniedAce, [ :pointer, :DWORD, :DWORD, :pointer ], :BOOL, :dll => "advapi32"
+    def self.add_access_denied_ace(acl, sid, access_mask, revision = ACL_REVISION)
+      acl = acl.pointer if acl.respond_to?(:pointer)
+      sid = sid.pointer if sid.respond_to?(:pointer)
+      unless AddAccessDeniedAce(acl, revision, access_mask, sid)
+        Win::Error.raise_last_error
+      end
+    end
+
+    function :AddAccessDeniedAceEx, [ :pointer, :DWORD, :DWORD, :DWORD, :pointer ], :BOOL, :dll => "advapi32"
+    def self.add_access_denied_ace_ex(acl, sid, access_mask, flags = 0, revision = ACL_REVISION)
+      acl = acl.pointer if acl.respond_to?(:pointer)
+      sid = sid.pointer if sid.respond_to?(:pointer)
+      unless AddAccessDeniedAceEx(acl, revision, flags, access_mask, sid)
+        Win::Error.raise_last_error
+      end
+    end
+
+    function :DeleteAce, [ :pointer, :DWORD ], :BOOL, :dll => "advapi32"
+    def self.delete_ace(acl, index)
+      acl = acl.pointer if acl.respond_to?(:pointer)
+      unless DeleteAce(acl, index)
+        Win::Error.raise_last_error
+      end
+    end
 
     function :FreeSid, [ :pointer ], :pointer, :dll => "advapi32"
     def self.free_sid(sid)
@@ -223,6 +289,11 @@ module Win
       ACE.new(ace.read_pointer)
     end
 
+    function :GetLengthSid, [ :pointer ], :DWORD, :dll => "advapi32"
+    def self.get_length_sid(sid)
+      GetLengthSid(sid)
+    end
+
     function :GetNamedSecurityInfo,  [ :LPTSTR, :SE_OBJECT_TYPE, :DWORD, :pointer, :pointer, :pointer, :pointer, :pointer ], :DWORD, :dll => "advapi32"
     def self.get_named_security_info(path, type = :SE_FILE_OBJECT, info = OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION, &block)
       security_descriptor = FFI::MemoryPointer.new :pointer
@@ -233,8 +304,11 @@ module Win
 
       result = SecurityDescriptor.new(security_descriptor.read_pointer)
       if block != nil
-        yield result
-        Win::Memory.local_free(result.pointer)
+        begin
+          yield result
+        ensure
+          Win::Memory.local_free(result.pointer)
+        end
       else
         result
       end
@@ -264,7 +338,7 @@ module Win
     end
 
     function :GetSecurityDescriptorGroup, [ :pointer, :pointer, :LPBOOL], :BOOL, :dll => "advapi32"
-    def self.get_security_descriptor_group(security_descriptor, &block)
+    def self.get_security_descriptor_group(security_descriptor)
       security_descriptor = security_descriptor.pointer if security_descriptor.respond_to?(:pointer)
       result = FFI::Buffer.new :pointer
       defaulted = FFI::Buffer.new :long
@@ -274,16 +348,11 @@ module Win
 
       sid = SID.new(result.read_pointer)
       defaulted = defaulted.read_char != 0
-      if block != nil
-        yield sid, defaulted
-        free_sid(sid)
-      else
-        [ sid, defaulted ]
-      end
+      [ sid, defaulted ]
     end
 
     function :GetSecurityDescriptorOwner, [ :pointer, :pointer, :LPBOOL], :BOOL, :dll => "advapi32"
-    def self.get_security_descriptor_owner(security_descriptor, &block)
+    def self.get_security_descriptor_owner(security_descriptor)
       security_descriptor = security_descriptor.pointer if security_descriptor.respond_to?(:pointer)
       result = FFI::Buffer.new :pointer
       defaulted = FFI::Buffer.new :long
@@ -293,12 +362,7 @@ module Win
 
       sid = SID.new(result.read_pointer)
       defaulted = defaulted.read_char != 0
-      if block != nil
-        yield sid, defaulted
-        free_sid(sid)
-      else
-        [ sid, defaulted ]
-      end
+      [ sid, defaulted ]
     end
 
     function :GetSecurityDescriptorSacl, [ :pointer, :LPBOOL, :pointer, :LPBOOL ], :BOOL, :dll => "advapi32"
@@ -315,26 +379,94 @@ module Win
 
     function :InitializeAcl, [ :pointer, :DWORD, :DWORD ], :BOOL, :dll => "advapi32"
 
+    function :LookupAccountName, [ :LPCTSTR, :LPCTSTR, :pointer, :LPDWORD, :LPTSTR, :LPDWORD, :pointer ], :BOOL, :dll => "advapi32"
+    def self.lookup_account_name(name, system_name = nil)
+      # Figure out how big the buffers need to be
+      sid_size = FFI::Buffer.new(:long).write_long(0)
+      referenced_domain_name_size = FFI::Buffer.new(:long).write_long(0)
+      if LookupAccountName(system_name, name, nil, sid_size, nil, referenced_domain_name_size, nil)
+        raise "Expected error from LookupAccountName!"
+      elsif Win::Error.GetLastError() != Win::Error::ERROR_INSUFFICIENT_BUFFER
+        Win::Error.raise_last_error
+      end
+
+      sid = FFI::MemoryPointer.new :char, sid_size.read_long
+      referenced_domain_name = FFI::MemoryPointer.new :char, referenced_domain_name_size.read_long
+      use = FFI::Buffer.new(:long).write_long(0)
+      unless LookupAccountName(system_name, name, sid, sid_size, referenced_domain_name, referenced_domain_name_size, use)
+        Win::Error.raise_last_error
+      end
+
+      [ referenced_domain_name.read_string, SID.new(sid), use.read_long ]
+    end
+
     function :LookupAccountSid, [ :LPCTSTR, :pointer, :LPTSTR, :LPDWORD, :LPTSTR, :LPDWORD, :pointer ], :BOOL, :dll => "advapi32"
     def self.lookup_account_sid(sid, system_name = nil)
-        sid = sid.pointer if sid.respond_to?(:pointer)
-        # Figure out how big the buffer needs to be
-        name_size = FFI::Buffer.new(:long).write_long(0)
-        referenced_domain_name_size = FFI::Buffer.new(:long).write_long(0)
-        if LookupAccountSid(system_name, sid, nil, name_size, nil, referenced_domain_name_size, nil)
-          raise "Expected error from LookupAccountSid!"
-        elsif Win::Error.GetLastError() != Win::Error::ERROR_INSUFFICIENT_BUFFER
-          raise "Expected ERROR_INSUFFICIENT_BUFFER from LookupAccountSid!"
-        end
+      sid = sid.pointer if sid.respond_to?(:pointer)
+      # Figure out how big the buffer needs to be
+      name_size = FFI::Buffer.new(:long).write_long(0)
+      referenced_domain_name_size = FFI::Buffer.new(:long).write_long(0)
+      if LookupAccountSid(system_name, sid, nil, name_size, nil, referenced_domain_name_size, nil)
+        raise "Expected error from LookupAccountSid!"
+      elsif Win::Error.GetLastError() != Win::Error::ERROR_INSUFFICIENT_BUFFER
+        Win::Error.raise_last_error
+      end
 
-        name = FFI::MemoryPointer.new :char, name_size.read_long
-        referenced_domain_name = FFI::MemoryPointer.new :char, referenced_domain_name_size.read_long
-        use = FFI::Buffer.new(:long).write_long(0)
-        unless LookupAccountSid(system_name, sid, name, name_size, referenced_domain_name, referenced_domain_name_size, use)
-          Win::Error.raise_last_error
-        end
+      name = FFI::MemoryPointer.new :char, name_size.read_long
+      referenced_domain_name = FFI::MemoryPointer.new :char, referenced_domain_name_size.read_long
+      use = FFI::Buffer.new(:long).write_long(0)
+      unless LookupAccountSid(system_name, sid, name, name_size, referenced_domain_name, referenced_domain_name_size, use)
+        Win::Error.raise_last_error
+      end
 
-        [ referenced_domain_name.read_string, name.read_string, use.read_long ]
+      [ referenced_domain_name.read_string, name.read_string, use.read_long ]
+    end
+
+    function :MakeAbsoluteSD, [ :pointer, :pointer, :LPDWORD, :pointer, :LPDWORD, :pointer, :LPDWORD, :pointer, :LPDWORD, :pointer, :LPDWORD], :BOOL, :dll => "advapi32"
+    def self.make_absolute_sd(security_descriptor, &block)
+      security_descriptor = security_descriptor.pointer if security_descriptor.respond_to?(:pointer)
+
+      # Figure out buffer sizes
+      absolute_sd_size = FFI::Buffer.new(:long).write_long(0)
+      dacl_size = FFI::Buffer.new(:long).write_long(0)
+      sacl_size = FFI::Buffer.new(:long).write_long(0)
+      owner_size = FFI::Buffer.new(:long).write_long(0)
+      group_size = FFI::Buffer.new(:long).write_long(0)
+      if MakeAbsoluteSD(security_descriptor, nil, absolute_sd_size, nil, dacl_size, nil, sacl_size, nil, owner_size, nil, group_size)
+        raise "Expected error from LookupAccountSid!"
+      elsif Win::Error.GetLastError() != Win::Error::ERROR_INSUFFICIENT_BUFFER
+        Win::Error.raise_last_error
+      end
+
+      absolute_sd = Win::Memory.local_alloc(absolute_sd_size.read_long)
+      dacl = Win::Memory.local_alloc(dacl_size.read_long)
+      sacl = Win::Memory.local_alloc(sacl_size.read_long)
+      owner = Win::Memory.local_alloc(owner_size.read_long)
+      group = Win::Memory.local_alloc(group_size.read_long)
+      unless MakeAbsoluteSD(security_descriptor, absolute_sd, absolute_sd_size, dacl, dacl_size, sacl, sacl_size, owner, owner_size, group, group_size)
+        Win::Error.raise_last_error
+      end
+
+      begin
+        yield SecurityDescriptor.new(absolute_sd)
+      ensure
+        Win::Memory.local_free(group)
+        Win::Memory.local_free(owner)
+        Win::Memory.local_free(sacl)
+        Win::Memory.local_free(dacl)
+        Win::Memory.local_free(absolute_sd)
+      end
+    end
+
+    function :SetSecurityDescriptorDacl, [ :pointer, :BOOL, :pointer, :BOOL ], :BOOL, :dll => "advapi32"
+    def self.set_security_descriptor_dacl(security_descriptor, dacl, defaulted = false, present = nil)
+      security_descriptor = security_descriptor.pointer if security_descriptor.respond_to?(:pointer)
+      dacl = dacl.pointer if dacl.respond_to?(:pointer)
+      present = !security_descriptor.null? if present == nil
+
+      unless SetSecurityDescriptorDacl(security_descriptor, present, dacl, defaulted)
+        Win::Error.raise_last_error
+      end
     end
   end
 end
