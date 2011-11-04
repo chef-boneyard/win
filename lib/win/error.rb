@@ -1015,13 +1015,19 @@ module Win
     # :call-seq:
     #  message = format_message(dw_flags, lp_source, dw_message_id, dw_language_id, *args)
     #
-    function :FormatMessage, [:DWORD, :LPCVOID, :DWORD, :DWORD, :LPTSTR, :DWORD, :varargs], :DWORD,
-             &->(api, flags=FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_ARGUMENT_ARRAY,
-                     source=nil, message_id=0, language_id=0, *args){
-             buffer = FFI::MemoryPointer.new :char, 260
-             args = [:int, 0] if args.empty?
-             num_chars = api.call(flags, source, message_id, language_id, buffer, buffer.size, *args)
-             num_chars == 0 ? nil : buffer.get_bytes(0, num_chars).strip }
+    function :FormatMessage, [:DWORD, :LPCVOID, :DWORD, :DWORD, :LPTSTR, :DWORD, :varargs], :DWORD do |*lambda_args|
+               raise ArgumentError if lambda_args.empty?
+               api, flags, source, message_id, language_id, *args = lambda_args
+               flags=FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_ARGUMENT_ARRAY if lambda_args.size < 2
+               source=nil if lambda_args.size<3
+               message_id=0 if lambda_args.size<4
+               language_id=0 if lambda_args.size<5
+
+               buffer = FFI::MemoryPointer.new :char, 260
+               args = [:int, 0] if args.empty?
+               num_chars = api.call(flags, source, message_id, language_id, buffer, buffer.size, *args)
+               num_chars == 0 ? nil : buffer.get_bytes(0, num_chars).strip
+             end
 
     ##
     # GetLastError Function
@@ -1064,10 +1070,11 @@ module Win
     # :call-seq:
     #  error_message = get_last_error()
     #
-    function :GetLastError, [], :uint32,
-             &->(api) { error_code = api.call
-             flags = FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_ARGUMENT_ARRAY
-             format_message(flags, nil, error_code)}
+    function :GetLastError, [], :uint32 do |api|
+               error_code = api.call
+               flags = FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_ARGUMENT_ARRAY
+               format_message(flags, nil, error_code)
+             end
 
     ##
     # SetLastError Function
@@ -1220,5 +1227,13 @@ module Win
     #
     function :SetErrorMode, [:UINT], :UINT
 
+    def self.raise_error(error_code)
+      flags = FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_ARGUMENT_ARRAY
+      raise Win::Error.format_message(flags, nil, error_code) + " (#{error_code})"
+    end
+
+    def self.raise_last_error
+      self.raise_error(Win::Error.GetLastError())
+    end
   end
 end
