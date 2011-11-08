@@ -15,16 +15,12 @@ module Win
       # you plan to allow, deny or audit access to.
       def self.create_uninitialized(sids, &block)
         aces_size = sids.inject(0) { |sum,sid| sum + Win::Security::ACE.size_with_sid(sid) }
-        puts ACLStruct.size
         acl_size = align_dword(ACLStruct.size + aces_size + 1094) # What the heck is 94???
         Win::Security.initialize_acl(acl_size, &block)
       end
 
       def self.create(aces, &block)
         create_uninitialized(aces.map { |ace| ace.sid }) do |acl|
-#        aces_size = aces.inject(0) { |sum,ace| sum + ace.size }
-#        acl_size = align_dword(ACLStruct.size + aces_size)
-#        Win::Security.initialize_acl(acl_size) do |acl|
           aces.each { |ace| Win::Security.add_ace(acl, ace) }
           yield acl
         end

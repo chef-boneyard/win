@@ -528,8 +528,6 @@ module Win
         security_information |= SACL_SECURITY_INFORMATION if sacl && !sacl.null?
       end
 
-      puts "Valid: #{is_valid_acl(dacl)}"
-      puts "SetNamedSecurityInfo(path=#{path}, type=#{type}, security_information=#{security_information}, owner=#{owner}, group=#{group}, dacl=#{dacl}, sacl=#{sacl}"
       hr = SetNamedSecurityInfo(path, type, DACL_SECURITY_INFORMATION, nil, nil, dacl, nil)
       if hr != Win::Error::S_OK
         Win::Error.raise_error(hr)
