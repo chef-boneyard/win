@@ -13,16 +13,20 @@ module Win
       attr_reader :pointer
 
       def account
-        Win::Security::lookup_account_sid(pointer)
+        Win::Security::lookup_account_sid(self)
       end
 
       def account_name
         domain, name, use = account
-        domain ? "#{domain}\\#{name}" : name
+        (domain != nil && domain.length > 0) ? "#{domain}\\#{name}" : name
       end
 
       def size
-        Win::Security::get_length_sid(pointer)
+        Win::Security::get_length_sid(self)
+      end
+
+      def valid?
+        Win::Security::is_valid_sid(self)
       end
     end
   end

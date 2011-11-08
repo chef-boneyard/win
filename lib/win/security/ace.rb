@@ -14,6 +14,10 @@ module Win
         end
       end
 
+      def self.size_with_sid(sid)
+        Win::Security::ACE_WITH_MASK_AND_SID.offset_of(:SidStart) + sid.size
+      end
+
       def self.access_allowed(sid, access_mask, flags = 0)
         create_ace_with_mask_and_sid(Win::Security::ACCESS_ALLOWED_ACE_TYPE, flags, access_mask, sid)
       end
@@ -54,9 +58,9 @@ module Win
 
       def size
         if Win::Security::ACE_WITH_MASK_AND_SID.supports?(struct[:AceType])
-          struct.offset_of(:SidStart) + sid.size
+          ACE.size_with_sid(sid)
         else
-          raise "Unsupported SID type"
+          raise "Unsupported ACE type"
         end
       end
 

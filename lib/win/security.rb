@@ -90,6 +90,7 @@ module Win
 
     # SECURITY_DESCRIPTOR_REVISION
     SECURITY_DESCRIPTOR_REVISION = 1
+    SECURITY_DESCRIPTOR_REVISION1 = 1
 
     # SECURITY_DESCRIPTOR_CONTROL
     SE_OWNER_DEFAULTED                = 0x0001
@@ -160,6 +161,10 @@ module Win
                                  FILE_READ_ATTRIBUTES     |
                                  FILE_EXECUTE             |
                                  SYNCHRONIZE
+
+    # Minimum size of a SECURITY_DESCRIPTOR.  TODO: this is probably platform dependent.
+    # Make it work on 64 bit.
+    SECURITY_DESCRIPTOR_MIN_LENGTH = 20
 
     # ACL revisions
     ACL_REVISION     = 2
@@ -291,6 +296,7 @@ module Win
 
     function :GetLengthSid, [ :pointer ], :DWORD, :dll => "advapi32"
     def self.get_length_sid(sid)
+      sid = sid.pointer if sid.respond_to?(:pointer)
       GetLengthSid(sid)
     end
 
@@ -378,6 +384,48 @@ module Win
     end
 
     function :InitializeAcl, [ :pointer, :DWORD, :DWORD ], :BOOL, :dll => "advapi32"
+    def self.initialize_acl(acl_size, &block)
+      acl = Win::Memory.local_alloc(acl_size)
+      begin
+        unless Win::Security::InitializeAcl(acl, acl_size, ACL_REVISION)
+          Win::Error.raise_last_error
+        end
+        yield ACL.new(acl)
+      ensure
+        Win::Memory.local_free(acl)
+      end
+    end
+
+    function :InitializeSecurityDescriptor, [ :pointer, :DWORD ], :BOOL, :dll => "advapi32"
+    def self.initialize_security_descriptor(revision = SECURITY_DESCRIPTOR_REVISION)
+      security_descriptor = Win::Memory.local_alloc(SECURITY_DESCRIPTOR_MIN_LENGTH)
+      begin
+        unless InitializeSecurityDescriptor(security_descriptor, revision)
+          Win::Error.raise_last_error
+        end
+        yield SecurityDescriptor.new(security_descriptor)
+      ensure
+        Win::Memory.local_free(security_descriptor)
+      end
+    end
+
+    function :IsValidAcl, [ :pointer ], :BOOL, :dll => "advapi32"
+    def self.is_valid_acl(acl)
+      acl = acl.pointer if acl.respond_to?(:pointer)
+      IsValidAcl(acl) != 0
+    end
+
+    function :IsValidSecurityDescriptor, [ :pointer ], :BOOL, :dll => "advapi32"
+    def self.is_valid_security_descriptor(security_descriptor)
+      security_descriptor = security_descriptor.pointer if security_descriptor.respond_to?(:pointer)
+      IsValidSecurityDescriptor(security_descriptor) != 0
+    end
+
+    function :IsValidSid, [ :pointer ], :BOOL, :dll => "advapi32"
+    def self.is_valid_sid(sid)
+      sid = sid.pointer if sid.respond_to?(:pointer)
+      IsValidSid(sid) != 0
+    end
 
     function :LookupAccountName, [ :LPCTSTR, :LPCTSTR, :pointer, :LPDWORD, :LPTSTR, :LPDWORD, :pointer ], :BOOL, :dll => "advapi32"
     def self.lookup_account_name(name, system_name = nil)
@@ -458,13 +506,74 @@ module Win
       end
     end
 
-    function :SetSecurityDescriptorDacl, [ :pointer, :BOOL, :pointer, :BOOL ], :BOOL, :dll => "advapi32"
-    def self.set_security_descriptor_dacl(security_descriptor, dacl, defaulted = false, present = nil)
+    function :SetFileSecurity, [ :LPTSTR, :DWORD, :pointer ], :BOOL
+    def self.set_file_security(path, security_information, security_descriptor)
       security_descriptor = security_descriptor.pointer if security_descriptor.respond_to?(:pointer)
-      dacl = dacl.pointer if dacl.respond_to?(:pointer)
+      unless SetFileSecurity(path, security_information, security_descriptor)
+        Win::Error.raise_last_error
+      end
+    end
+
+    function :SetNamedSecurityInfo, [ :LPTSTR, :SE_OBJECT_TYPE, :DWORD, :pointer, :pointer, :pointer, :pointer ], :DWORD, :dll => "advapi32"
+    def self.set_named_security_info(path, owner = nil, group = nil, dacl = nil, sacl = nil, type = :SE_FILE_OBJECT, security_information = nil)
+      owner = owner.pointer if owner && owner.respond_to?(:pointer)
+      group = group.pointer if group && group.respond_to?(:pointer)
+      dacl = dacl.pointer if dacl && dacl.respond_to?(:pointer)
+      sacl = sacl.pointer if sacl && sacl.respond_to?(:pointer)
+      if security_information == nil
+        security_information = 0
+        security_information |= OWNER_SECURITY_INFORMATION if owner && !owner.null?
+        security_information |= GROUP_SECURITY_INFORMATION if group && !group.null?
+        security_information |= DACL_SECURITY_INFORMATION if dacl && !dacl.null? 
+        security_information |= SACL_SECURITY_INFORMATION if sacl && !sacl.null?
+      end
+
+      puts "Valid: #{is_valid_acl(dacl)}"
+      puts "SetNamedSecurityInfo(path=#{path}, type=#{type}, security_information=#{security_information}, owner=#{owner}, group=#{group}, dacl=#{dacl}, sacl=#{sacl}"
+      hr = SetNamedSecurityInfo(path, type, DACL_SECURITY_INFORMATION, nil, nil, dacl, nil)
+      if hr != Win::Error::S_OK
+        Win::Error.raise_error(hr)
+      end
+    end
+
+    function :SetSecurityDescriptorDacl, [ :pointer, :BOOL, :pointer, :BOOL ], :BOOL, :dll => "advapi32"
+    def self.set_security_descriptor_dacl(security_descriptor, acl, defaulted = false, present = nil)
+      security_descriptor = security_descriptor.pointer if security_descriptor.respond_to?(:pointer)
+      acl = acl.pointer if acl.respond_to?(:pointer)
       present = !security_descriptor.null? if present == nil
 
-      unless SetSecurityDescriptorDacl(security_descriptor, present, dacl, defaulted)
+      unless SetSecurityDescriptorDacl(security_descriptor, present, acl, defaulted)
+        Win::Error.raise_last_error
+      end
+    end
+
+    function :SetSecurityDescriptorGroup, [ :pointer, :pointer, :BOOL ], :BOOL, :dll => "advapi32"
+    def self.set_security_descriptor_group(security_descriptor, sid, defaulted = false)
+      security_descriptor = security_descriptor.pointer if security_descriptor.respond_to?(:pointer)
+      sid = sid.pointer if sid.respond_to?(:pointer)
+
+      unless SetSecurityDescriptorGroup(security_descriptor, sid, defaulted)
+        Win::Error.raise_last_error
+      end
+    end
+
+    function :SetSecurityDescriptorOwner, [ :pointer, :pointer, :BOOL ], :BOOL, :dll => "advapi32"
+    def self.set_security_descriptor_group(security_descriptor, sid, defaulted = false)
+      security_descriptor = security_descriptor.pointer if security_descriptor.respond_to?(:pointer)
+      sid = sid.pointer if sid.respond_to?(:pointer)
+
+      unless SetSecurityDescriptorOwner(security_descriptor, sid, defaulted)
+        Win::Error.raise_last_error
+      end
+    end
+
+    function :SetSecurityDescriptorSacl, [ :pointer, :BOOL, :pointer, :BOOL ], :BOOL, :dll => "advapi32"
+    def self.set_security_descriptor_sacl(security_descriptor, acl, defaulted = false, present = nil)
+      security_descriptor = security_descriptor.pointer if security_descriptor.respond_to?(:pointer)
+      acl = acl.pointer if acl.respond_to?(:pointer)
+      present = !security_descriptor.null? if present == nil
+
+      unless SetSecurityDescriptorSacl(security_descriptor, present, acl, defaulted)
         Win::Error.raise_last_error
       end
     end

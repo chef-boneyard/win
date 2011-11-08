@@ -11,20 +11,23 @@ module Win
         @struct = Win::Security::ACLStruct.new pointer
       end
 
+      # Create an ACL with all free slots, passing in the list of sids
+      # you plan to allow, deny or audit access to.
+      def self.create_uninitialized(sids, &block)
+        aces_size = sids.inject(0) { |sum,sid| sum + Win::Security::ACE.size_with_sid(sid) }
+        puts ACLStruct.size
+        acl_size = align_dword(ACLStruct.size + aces_size + 1094) # What the heck is 94???
+        Win::Security.initialize_acl(acl_size, &block)
+      end
+
       def self.create(aces, &block)
-        aces_size = aces.inject(0) { |sum,ace| sum + ace.size }
-        acl_size = align_dword(ACLStruct.size + aces_size)
-        acl = Win::Memory.local_alloc(acl_size)
-
-        unless Win::Security::InitializeAcl(acl, acl_size, ACL_REVISION)
-          Win::Error.raise_last_error
+        create_uninitialized(aces.map { |ace| ace.sid }) do |acl|
+#        aces_size = aces.inject(0) { |sum,ace| sum + ace.size }
+#        acl_size = align_dword(ACLStruct.size + aces_size)
+#        Win::Security.initialize_acl(acl_size) do |acl|
+          aces.each { |ace| Win::Security.add_ace(acl, ace) }
+          yield acl
         end
-
-        aces.each { |ace| Win::Security.add_ace(acl, ace) }
-
-        yield ACL.new(acl)
-
-        Win::Memory.local_free(acl)
       end
 
       attr_reader :struct
@@ -34,11 +37,11 @@ module Win
       end
 
       def [](index)
-        Win::Security::get_ace(pointer, index)
+        Win::Security::get_ace(self, index)
       end
 
       def delete_at(index)
-        Win::Security.delete_ace(pointer, index)
+        Win::Security.delete_ace(self, index)
       end
 
       def each
@@ -46,7 +49,7 @@ module Win
       end
 
       def insert(index, *aces)
-        aces.reverse_each { |ace| Win::Security.add_ace(pointer, ace, index) }
+        aces.reverse_each { |ace| Win::Security.add_ace(self, ace, index) }
       end
 
       def length
@@ -57,8 +60,16 @@ module Win
         aces.each { |ace| Win::Security.add_ace(self, ace) }
       end
 
+      def push_access_allowed(sid, access_mask, flags = 0)
+        Win::Security.add_access_allowed_ace_ex(self, sid, access_mask, flags)
+      end
+
       def unshift(*aces)
-        aces.each { |ace| Win::Security.add_ace(pointer, ace, 0) }
+        aces.each { |ace| Win::Security.add_ace(self, ace, 0) }
+      end
+
+      def valid?
+        Win::Security.is_valid_acl(self)
       end
 
       private
