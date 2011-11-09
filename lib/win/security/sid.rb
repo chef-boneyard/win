@@ -1,8 +1,10 @@
 module Win
   module Security
     class SID
-      def initialize(pointer)
+      def initialize(pointer, owner = nil)
         @pointer = pointer
+        # Keep a reference to the actual owner of this memory so we don't get freed
+        @owner = owner
       end
 
       def self.from_account(name)

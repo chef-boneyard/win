@@ -7,19 +7,22 @@ module Win
     class ACL
       include Enumerable
 
-      def initialize(pointer)
+      def initialize(pointer, owner = nil)
         @struct = Win::Security::ACLStruct.new pointer
+        # Keep a reference to the actual owner of this memory so that it isn't freed out from under us
+        # TODO this could be avoided if we could mark a pointer's parent manually
+        @owner = owner
       end
 
       # Create an ACL with all free slots, passing in the list of sids
       # you plan to allow, deny or audit access to.
-      def self.create_uninitialized(sids, &block)
+      def self.create_uninitialized(sids)
         aces_size = sids.inject(0) { |sum,sid| sum + Win::Security::ACE.size_with_sid(sid) }
-        acl_size = align_dword(ACLStruct.size + aces_size + 1094) # What the heck is 94???
-        Win::Security.initialize_acl(acl_size, &block)
+        acl_size = align_dword(ACLStruct.size + aces_size) # What the heck is 94???
+        Win::Security.initialize_acl(acl_size)
       end
 
-      def self.create(aces, &block)
+      def self.create(aces)
         create_uninitialized(aces.map { |ace| ace.sid }) do |acl|
           aces.each { |ace| Win::Security.add_ace(acl, ace) }
           yield acl

@@ -5,13 +5,15 @@ require 'ffi'
 module Win
   module Security
     class ACE
-      def initialize(pointer)
+      def initialize(pointer, owner = nil)
         if Win::Security::ACE_WITH_MASK_AND_SID.supports?(pointer.read_uchar)
           @struct = Win::Security::ACE_WITH_MASK_AND_SID.new pointer
         else
           # TODO Support ALL the things
           @struct = Win::Security::ACE_HEADER.new pointer
         end
+        # Keep a reference to the actual owner of this memory so we don't get freed
+        @owner = owner
       end
 
       def self.size_with_sid(sid)
@@ -57,11 +59,7 @@ module Win
       end
 
       def size
-        if Win::Security::ACE_WITH_MASK_AND_SID.supports?(struct[:AceType])
-          ACE.size_with_sid(sid)
-        else
-          raise "Unsupported ACE type"
-        end
+        struct[:AceSize]
       end
 
       def sid
@@ -77,15 +75,14 @@ module Win
       private
 
       def self.create_ace_with_mask_and_sid(type, flags, mask, sid)
-        sid_size = sid.size
-        size_needed = Win::Security::ACE_WITH_MASK_AND_SID.offset_of(:SidStart) + sid_size
+        size_needed = size_with_sid(sid)
         pointer = FFI::MemoryPointer.new size_needed
         struct = Win::Security::ACE_WITH_MASK_AND_SID.new pointer
         struct[:AceType] = type
         struct[:AceFlags] = flags
         struct[:AceSize] = size_needed
         struct[:Mask] = mask
-        Win::Memory.memcpy(struct.pointer + struct.offset_of(:SidStart), sid.pointer, sid_size)
+        Win::Memory.memcpy(struct.pointer + struct.offset_of(:SidStart), sid.pointer, sid.size)
         ACE.new(struct.pointer)
       end
     end

@@ -291,7 +291,7 @@ module Win
       unless GetAce(acl, index, ace)
         Win::Error.raise_last_error
       end
-      ACE.new(ace.read_pointer)
+      ACE.new(ace.read_pointer, acl)
     end
 
     function :GetLengthSid, [ :pointer ], :DWORD, :dll => "advapi32"
@@ -301,23 +301,20 @@ module Win
     end
 
     function :GetNamedSecurityInfo,  [ :LPTSTR, :SE_OBJECT_TYPE, :DWORD, :pointer, :pointer, :pointer, :pointer, :pointer ], :DWORD, :dll => "advapi32"
-    def self.get_named_security_info(path, type = :SE_FILE_OBJECT, info = OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION, &block)
+    def self.get_named_security_info(path, type = :SE_FILE_OBJECT, info = OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION)
       security_descriptor = FFI::MemoryPointer.new :pointer
       hr = GetNamedSecurityInfo(path, type, info, nil, nil, nil, nil, security_descriptor)
       if hr != Win::Error::S_OK
         Win::Error.raise_error(hr)
       end
 
-      result = SecurityDescriptor.new(security_descriptor.read_pointer)
-      if block != nil
-        begin
-          yield result
-        ensure
-          Win::Memory.local_free(result.pointer)
-        end
-      else
-        result
-      end
+      result_pointer = security_descriptor.read_pointer
+      result = SecurityDescriptor.new(result_pointer)
+
+      # This memory has to be freed with LocalFree.
+      ObjectSpace.define_finalizer(result, proc { Win::Memory.local_free(result_pointer) })
+
+      result
     end
 
     function :GetSecurityDescriptorControl, [ :pointer, :PWORD, :LPDWORD], :BOOL, :dll => "advapi32"
@@ -340,7 +337,7 @@ module Win
       unless GetSecurityDescriptorDacl(security_descriptor, present, acl, defaulted)
         Win::Error.raise_last_error
       end
-      [ present.read_char != 0, ACL.new(acl.read_pointer), defaulted.read_char != 0 ]
+      [ present.read_char != 0, ACL.new(acl.read_pointer, security_descriptor), defaulted.read_char != 0 ]
     end
 
     function :GetSecurityDescriptorGroup, [ :pointer, :pointer, :LPBOOL], :BOOL, :dll => "advapi32"
@@ -352,7 +349,7 @@ module Win
         Win::Error.raise_last_error
       end
 
-      sid = SID.new(result.read_pointer)
+      sid = SID.new(result.read_pointer, security_descriptor)
       defaulted = defaulted.read_char != 0
       [ sid, defaulted ]
     end
@@ -366,7 +363,7 @@ module Win
         Win::Error.raise_last_error
       end
 
-      sid = SID.new(result.read_pointer)
+      sid = SID.new(result.read_pointer, security_descriptor)
       defaulted = defaulted.read_char != 0
       [ sid, defaulted ]
     end
@@ -380,33 +377,25 @@ module Win
       unless GetSecurityDescriptorSacl(security_descriptor, present, acl, defaulted)
         Win::Error.raise_last_error
       end
-      [ present.read_char != 0, ACL.new(acl.read_pointer), defaulted.read_char != 0 ]
+      [ present.read_char != 0, ACL.new(acl.read_pointer, security_descriptor), defaulted.read_char != 0 ]
     end
 
     function :InitializeAcl, [ :pointer, :DWORD, :DWORD ], :BOOL, :dll => "advapi32"
-    def self.initialize_acl(acl_size, &block)
-      acl = Win::Memory.local_alloc(acl_size)
-      begin
-        unless Win::Security::InitializeAcl(acl, acl_size, ACL_REVISION)
-          Win::Error.raise_last_error
-        end
-        yield ACL.new(acl)
-      ensure
-        Win::Memory.local_free(acl)
+    def self.initialize_acl(acl_size)
+      acl = FFI::MemoryPointer.new acl_size
+      unless Win::Security::InitializeAcl(acl, acl_size, ACL_REVISION)
+        Win::Error.raise_last_error
       end
+      ACL.new(acl)
     end
 
     function :InitializeSecurityDescriptor, [ :pointer, :DWORD ], :BOOL, :dll => "advapi32"
     def self.initialize_security_descriptor(revision = SECURITY_DESCRIPTOR_REVISION)
-      security_descriptor = Win::Memory.local_alloc(SECURITY_DESCRIPTOR_MIN_LENGTH)
-      begin
-        unless InitializeSecurityDescriptor(security_descriptor, revision)
-          Win::Error.raise_last_error
-        end
-        yield SecurityDescriptor.new(security_descriptor)
-      ensure
-        Win::Memory.local_free(security_descriptor)
+      security_descriptor = FFI::MemoryPointer.new SECURITY_DESCRIPTOR_MIN_LENGTH
+      unless InitializeSecurityDescriptor(security_descriptor, revision)
+        Win::Error.raise_last_error
       end
+      SecurityDescriptor.new(security_descriptor)
     end
 
     function :IsValidAcl, [ :pointer ], :BOOL, :dll => "advapi32"
@@ -471,7 +460,7 @@ module Win
     end
 
     function :MakeAbsoluteSD, [ :pointer, :pointer, :LPDWORD, :pointer, :LPDWORD, :pointer, :LPDWORD, :pointer, :LPDWORD, :pointer, :LPDWORD], :BOOL, :dll => "advapi32"
-    def self.make_absolute_sd(security_descriptor, &block)
+    def self.make_absolute_sd(security_descriptor)
       security_descriptor = security_descriptor.pointer if security_descriptor.respond_to?(:pointer)
 
       # Figure out buffer sizes
@@ -486,24 +475,16 @@ module Win
         Win::Error.raise_last_error
       end
 
-      absolute_sd = Win::Memory.local_alloc(absolute_sd_size.read_long)
-      dacl = Win::Memory.local_alloc(dacl_size.read_long)
-      sacl = Win::Memory.local_alloc(sacl_size.read_long)
-      owner = Win::Memory.local_alloc(owner_size.read_long)
-      group = Win::Memory.local_alloc(group_size.read_long)
+      absolute_sd = FFI::MemoryPointer.new absolute_sd_size.read_long
+      owner = FFI::MemoryPointer.new owner_size.read_long
+      group = FFI::MemoryPointer.new group_size.read_long
+      dacl = FFI::MemoryPointer.new dacl_size.read_long
+      sacl = FFI::MemoryPointer.new sacl_size.read_long
       unless MakeAbsoluteSD(security_descriptor, absolute_sd, absolute_sd_size, dacl, dacl_size, sacl, sacl_size, owner, owner_size, group, group_size)
         Win::Error.raise_last_error
       end
 
-      begin
-        yield SecurityDescriptor.new(absolute_sd)
-      ensure
-        Win::Memory.local_free(group)
-        Win::Memory.local_free(owner)
-        Win::Memory.local_free(sacl)
-        Win::Memory.local_free(dacl)
-        Win::Memory.local_free(absolute_sd)
-      end
+      SecurityDescriptor.new(absolute_sd, SID.new(owner), SID.new(group), ACL.new(dacl), ACL.new(sacl))
     end
 
     function :SetFileSecurity, [ :LPTSTR, :DWORD, :pointer ], :BOOL
