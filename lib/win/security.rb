@@ -528,7 +528,7 @@ module Win
         security_information |= SACL_SECURITY_INFORMATION if sacl && !sacl.null?
       end
 
-      hr = SetNamedSecurityInfo(path, type, DACL_SECURITY_INFORMATION, nil, nil, dacl, nil)
+      hr = SetNamedSecurityInfo(path, type, security_information, owner, group, dacl, sacl)
       if hr != Win::Error::S_OK
         Win::Error.raise_error(hr)
       end
