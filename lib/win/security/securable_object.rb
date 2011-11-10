@@ -24,6 +24,7 @@ module Win
         Win::Security::get_named_security_info(@path, @type, DACL_SECURITY_INFORMATION).dacl_inherits?
       end
 
+      # You don't set dacl_inherits without also setting dacl because Windows gets angry and denies you access
       def set_dacl(dacl, dacl_inherits)
         Win::Security::set_named_security_info(@path, @type, :dacl => dacl, :dacl_inherits => dacl_inherits)
       end
