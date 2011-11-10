@@ -487,6 +487,13 @@ module Win
       [ SecurityDescriptor.new(absolute_sd), SID.new(owner), SID.new(group), ACL.new(dacl), ACL.new(sacl) ]
     end
 
+    function :QuerySecurityAccessMask, [ :DWORD, :LPDWORD ], :void, :dll => "advapi32"
+    def self.query_security_access_mask(security_information)
+      result = FFI::Buffer.new(:long)
+      QuerySecurityAccessMask(security_information, result)
+      result.read_long
+    end
+
     function :SetFileSecurity, [ :LPTSTR, :DWORD, :pointer ], :BOOL
     def self.set_file_security(path, security_information, security_descriptor)
       security_descriptor = security_descriptor.pointer if security_descriptor.respond_to?(:pointer)
@@ -523,6 +530,13 @@ module Win
       if hr != Win::Error::S_OK
         Win::Error.raise_error(hr)
       end
+    end
+
+    function :SetSecurityAccessMask, [ :DWORD, :LPDWORD ], :void, :dll => "advapi32"
+    def self.set_security_access_mask(security_information)
+      result = FFI::Buffer.new(:long)
+      SetSecurityAccessMask(security_information, result)
+      result.read_long
     end
 
     function :SetSecurityDescriptorDacl, [ :pointer, :BOOL, :pointer, :BOOL ], :BOOL, :dll => "advapi32"
