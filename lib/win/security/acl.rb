@@ -14,19 +14,12 @@ module Win
         @owner = owner
       end
 
-      # Create an ACL with all free slots, passing in the list of sids
-      # you plan to allow, deny or audit access to.
-      def self.create_uninitialized(sids)
-        aces_size = sids.inject(0) { |sum,sid| sum + Win::Security::ACE.size_with_sid(sid) }
-        acl_size = align_dword(ACLStruct.size + aces_size) # What the heck is 94???
-        Win::Security.initialize_acl(acl_size)
-      end
-
       def self.create(aces)
-        create_uninitialized(aces.map { |ace| ace.sid }) do |acl|
-          aces.each { |ace| Win::Security.add_ace(acl, ace) }
-          yield acl
-        end
+        aces_size = aces.inject(0) { |sum,ace| sum + ace.size }
+        acl_size = align_dword(ACLStruct.size + aces_size) # What the heck is 94???
+        acl = Win::Security.initialize_acl(acl_size)
+        aces.each { |ace| Win::Security.add_ace(acl, ace) }
+        acl
       end
 
       attr_reader :struct
@@ -57,10 +50,6 @@ module Win
 
       def push(*aces)
         aces.each { |ace| Win::Security.add_ace(self, ace) }
-      end
-
-      def push_access_allowed(sid, access_mask, flags = 0)
-        Win::Security.add_access_allowed_ace_ex(self, sid, access_mask, flags)
       end
 
       def unshift(*aces)

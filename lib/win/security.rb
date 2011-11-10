@@ -484,7 +484,7 @@ module Win
         Win::Error.raise_last_error
       end
 
-      SecurityDescriptor.new(absolute_sd, SID.new(owner), SID.new(group), ACL.new(dacl), ACL.new(sacl))
+      [ SecurityDescriptor.new(absolute_sd), SID.new(owner), SID.new(group), ACL.new(dacl), ACL.new(sacl) ]
     end
 
     function :SetFileSecurity, [ :LPTSTR, :DWORD, :pointer ], :BOOL
@@ -496,17 +496,27 @@ module Win
     end
 
     function :SetNamedSecurityInfo, [ :LPTSTR, :SE_OBJECT_TYPE, :DWORD, :pointer, :pointer, :pointer, :pointer ], :DWORD, :dll => "advapi32"
-    def self.set_named_security_info(path, owner = nil, group = nil, dacl = nil, sacl = nil, type = :SE_FILE_OBJECT, security_information = nil)
+    def self.set_named_security_info(path, type, args)
+      owner = args[:owner]
+      group = args[:group]
+      dacl = args[:dacl]
+      sacl = args[:sacl]
       owner = owner.pointer if owner && owner.respond_to?(:pointer)
       group = group.pointer if group && group.respond_to?(:pointer)
       dacl = dacl.pointer if dacl && dacl.respond_to?(:pointer)
       sacl = sacl.pointer if sacl && sacl.respond_to?(:pointer)
-      if security_information == nil
-        security_information = 0
-        security_information |= OWNER_SECURITY_INFORMATION if owner && !owner.null?
-        security_information |= GROUP_SECURITY_INFORMATION if group && !group.null?
-        security_information |= DACL_SECURITY_INFORMATION if dacl && !dacl.null? 
-        security_information |= SACL_SECURITY_INFORMATION if sacl && !sacl.null?
+
+      # Determine the security_information flags
+      security_information = 0
+      security_information |= OWNER_SECURITY_INFORMATION if args.has_key?(:owner)
+      security_information |= GROUP_SECURITY_INFORMATION if args.has_key?(:group)
+      security_information |= DACL_SECURITY_INFORMATION if args.has_key?(:dacl)
+      security_information |= SACL_SECURITY_INFORMATION if args.has_key?(:sacl)
+      if args.has_key?(:dacl_inherits)
+        security_information |= (args[:dacl_inherits] ? UNPROTECTED_DACL_SECURITY_INFORMATION : PROTECTED_DACL_SECURITY_INFORMATION)
+      end
+      if args.has_key?(:sacl_inherits)
+        security_information |= (args[:sacl_inherits] ? UNPROTECTED_SACL_SECURITY_INFORMATION : PROTECTED_SACL_SECURITY_INFORMATION)
       end
 
       hr = SetNamedSecurityInfo(path, type, security_information, owner, group, dacl, sacl)
